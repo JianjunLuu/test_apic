@@ -41,71 +41,6 @@ MODULE_LICENSE("GPL");
 
 #define TIMER_INIT_COUNT   0x10000  // 初始计数值，可调整
 
-//以下是映射物理地址相关代码
-
-typedef enum {PGD, PUD, PMD, PTE, PAGE} pt_level_t;
-
-typedef struct {
-    uint64_t virt;
-    uint64_t phys;
-    uint64_t pgd;
-    uint64_t pud;
-    uint64_t pmd;
-    uint64_t pte;
-    uint64_t pgd_phys_address;
-} address_mapping_t;
-
-/* 获取给定虚拟地址对应的物理地址 */
-static uint64_t get_phys_addr_from_virt(void *virt)
-{
-    uint64_t phys;
-    struct page *page = virt_to_page(virt);
-    phys = page_to_phys(page);
-    return phys;
-}
-
-/* 内核版 remap()，将物理地址映射到内核虚拟空间 */
-static void *remap(uint64_t phys)
-{
-    void *vaddr = memremap(phys & PAGE_MASK, PAGE_SIZE, MEMREMAP_WB);
-    if (!vaddr) {
-        pr_err("memremap failed for phys=0x%llx\n", phys);
-        return NULL;
-    }
-
-    return vaddr + (phys & ~PAGE_MASK);
-}
-
-/* 获取页表层级物理地址（简化为直接返回物理页） */
-static uint64_t phys_address(address_mapping_t *map, pt_level_t level)
-{
-    if (level == PAGE)
-        return map->phys;
-    else
-        return map->phys; // 这里只演示页级映射，更多层级可扩展
-}
-
-/* 内核版 remap_page_table_level */
-void *remap_page_table_level(void *address, pt_level_t level)
-{
-    address_mapping_t *map;
-    void *addr_remapped;
-
-    map = kmalloc(sizeof(address_mapping_t), GFP_KERNEL);
-    if (!map)
-        return NULL;
-
-    memset(map, 0, sizeof(*map));
-    map->virt = (uint64_t)address;
-    map->phys = get_phys_addr_from_virt(address);
-
-    pr_info("[remap_page_table_level] virt=0x%llx -> phys=0x%llx\n", map->virt, map->phys);
-
-    addr_remapped = remap(phys_address(map, level));
-    kfree(map);
-
-    return addr_remapped;
-}
 
 //保存原状态
 /*static gate_desc old_gate;
@@ -113,7 +48,6 @@ static bool old_gate_saved = false;
 static u64 old_lvt_timer = 0;
 static u64 old_init_count = 0;
 static bool old_lvt_saved = false;*/
-
 
 extern void my_idt_stub(void);
 //C中断处理函数
@@ -127,6 +61,31 @@ void my_isr_c_handler(void)
 void read_idt(struct desc_ptr *idtr)
 {
     asm volatile ("sidt %0" : "=m" (*idtr)); // 将IDTR内容存入idtr
+}
+//为当前 IDT 创建一份可写副本
+static gate_desc *alloc_writable_idt_copy(struct desc_ptr *idtr)
+{
+    gate_desc *old_idt, *new_idt;
+
+    // ① 获取当前 IDT 信息
+    read_idt(idtr);
+    pr_info("[创建idt副本] size = 0x%x (%u bytes), base = 0x%lx\n",
+            idtr->size, idtr->size, idtr->address);
+
+    old_idt = (gate_desc *)idtr->address;
+
+    // ② 分配一块新的内核内存，用于可写 IDT 副本
+    new_idt = kmalloc(idtr->size + 1, GFP_KERNEL);
+    if (!new_idt) {
+        pr_err("❌ kmalloc for new_idt failed\n");
+        return NULL;
+    }
+
+    // ③ 复制原 IDT 内容
+    memcpy(new_idt, old_idt, idtr->size + 1);
+    pr_info("✅ 成功复制 IDT 到新可写内存: %px\n", new_idt);
+
+    return new_idt;
 }
 //安装IDT
 static void install_idt_entry_on_cpu(void *info)
@@ -195,21 +154,27 @@ typedef struct gate_struct gate_desc;
                 desc->reserved);
     }
 */
+//创建可写 IDT 副本
+    gate_desc *new_idt;
+
+        new_idt = alloc_writable_idt_copy(&idtr);
+        if (!new_idt) {
+            pr_err("创建可写 IDT 副本失败\n");
+            return;
+        }
+
+        pr_info("新 IDT base的副本地址: %px, 大小: %u bytes\n", new_idt, idtr.size + 1);
+
 
 //以下是直接修改 idt_table 的方法写入idt
-
     //gate_desc *desc = &idt_table[TIMER_VECTOR];// 指针指向要改的元素地址
-    //以下几行是sgx的方法
-    void *idt_base = NULL;
-    //idt_base = (void*) idtr.address;
-    idt_base = remap_page_table_level((void*) idtr.address, PAGE);//重新映射 IDT 表所在的物理页到虚拟地址
-    gate_desc *base;
-    base = (gate_desc*) idt_base;//指向 IDT 表的起始地址
-    gate_desc *desc = (gate_desc*) (((void*) base) + TIMER_VECTOR*sizeof(gate_desc));//sgx的方法修改IDT 表项
+
+//修改idt副本 new_idt
+    gate_desc *desc = &new_idt[TIMER_VECTOR];// 指针指向新副本要改的元素地址
     pr_info("指针指向要改的元素地址 (entry[%02x]) address = %px\n", TIMER_VECTOR, desc);
   
     // 1. 禁止中断修改
-   /* local_irq_disable();
+    local_irq_disable();
     // 2. 修改 gate 描述符
     desc->offset_low    = handler_addr & 0xFFFF;
     desc->segment       = __KERNEL_CS;  // 通常是 0x10
@@ -223,7 +188,39 @@ typedef struct gate_struct gate_desc;
     // 3. 恢复中断
     local_irq_enable();
     pr_info("[HOOK] IDT[%02x] hooked to 0x%lx\n",  TIMER_VECTOR, handler_addr);
-*/
+//验证写入结果
+    gate_desc *verify_desc = &new_idt[TIMER_VECTOR];
+        unsigned long new_offset = ((unsigned long)verify_desc->offset_high << 32) |
+                                   ((unsigned long)verify_desc->offset_middle << 16) |
+                                   verify_desc->offset_low;
+
+        pr_info("[验证写入结果] IDT[%02x] 描述符内容:\n", TIMER_VECTOR);
+        pr_info("  offset = 0x%016lx\n", new_offset);
+        pr_info("  segment = 0x%04x\n", verify_desc->segment);
+        pr_info("  type = 0x%x, dpl = %u, p = %u, ist = %u\n",
+                verify_desc->bits.type,
+                verify_desc->bits.dpl,
+                verify_desc->bits.p,
+                verify_desc->bits.ist);
+        pr_info("  off_low = 0x%04x, off_mid = 0x%04x, off_high = 0x%08x, reserved = 0x%08x\n",
+                verify_desc->offset_low,
+                verify_desc->offset_middle,
+                verify_desc->offset_high,
+                verify_desc->reserved);
+
+        if (new_offset == handler_addr)
+            pr_info("[验证结果] ✅ 写入成功，handler 地址匹配！\n");
+        else
+            pr_warn("[验证结果] ⚠️ 写入失败：预期 0x%lx, 实际 0x%lx\n",
+                    handler_addr, new_offset);
+
+
+    idtr.address = (unsigned long)new_idt;
+    // 使用 lidt 加载新的 IDT到寄存器
+    //load_idt(&idtr);
+    pr_info("[IDT] 已加载新的 IDT 副本，地址 = 0x%lx\n", idtr.address);
+
+
 
     //old_gate = idt_table[TIMER_VECTOR];
     //old_gate_saved = true;
