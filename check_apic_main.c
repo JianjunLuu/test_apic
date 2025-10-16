@@ -36,7 +36,7 @@ MODULE_LICENSE("GPL");
 #define X2APIC_TIMER_CUR   0x839  // Current Count Register
 #define X2APIC_EOI        0x80B
 
-#define TIMER_VECTOR 0xEC  // 中断向量
+#define TIMER_VECTOR 0xEC  // 中断向量,236
 #define IA32_PMC0    0x0C1   // PMC0 MSR
 
 #define TIMER_INIT_COUNT   0x10000  // 初始计数值，可调整
@@ -57,7 +57,10 @@ void my_isr_c_handler(void)
     // 发送 EOI，通知 LAPIC 
     wrmsrl(X2APIC_EOI, 0);
 }
-
+static inline void write_idt(struct desc_ptr *dtr)
+{
+    __asm__ volatile("lidt (%0)" :: "r"(dtr));
+}
 void read_idt(struct desc_ptr *idtr)
 {
     asm volatile ("sidt %0" : "=m" (*idtr)); // 将IDTR内容存入idtr
@@ -130,15 +133,15 @@ typedef struct gate_struct gate_desc;
     //打印 my_idt_stub 的地址
     unsigned long handler_addr = (unsigned long)&my_idt_stub;
     pr_info("handler地址: 0x%lx\n", handler_addr);
-    /*
+    
     //读取 IDT 表项内容，验证指针正确性
-    for (int i = 0; i < 1; i++) {// 遍历所有可能的中断向量
+    for (int i = 235; i < 238; i++) {// 遍历所有可能的中断向量
         gate_desc *desc = &idt_table[i];
         unsigned long offset = ((unsigned long)desc->offset_high << 32) |
                             ((unsigned long)desc->offset_middle << 16) |
                             desc->offset_low;
 
-        pr_info("使用指针作为起始地址读取IDT[%3d]: offset=0x%016lx sel=0x%04x "
+        pr_info("使用指针作为起始地址读取写入前的IDT[%3d]: offset=0x%016lx sel=0x%04x "
                 "type=0x%x dpl=%u p=%u ist=%u "
                 "off_low=0x%04x off_mid=0x%04x off_high=0x%08x reserved=0x%08x\n",
                 i,
@@ -153,7 +156,7 @@ typedef struct gate_struct gate_desc;
                 desc->offset_high,
                 desc->reserved);
     }
-*/
+
 //创建可写 IDT 副本
     gate_desc *new_idt;
 
@@ -217,7 +220,7 @@ typedef struct gate_struct gate_desc;
 
     idtr.address = (unsigned long)new_idt;
     // 使用 lidt 加载新的 IDT到寄存器
-    //load_idt(&idtr);
+    //write_idt(&idtr);
     pr_info("[IDT] 已加载新的 IDT 副本，地址 = 0x%lx\n", idtr.address);
 
 
