@@ -1,4 +1,3 @@
-// 文件名: check_apic.c
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -25,6 +24,9 @@
 #include <linux/highmem.h>
 #include <linux/uaccess.h>
 #include <linux/pgtable.h>
+#include <linux/kallsyms.h>
+#include <linux/delay.h>
+
 
 
 MODULE_LICENSE("GPL");
@@ -36,10 +38,10 @@ MODULE_LICENSE("GPL");
 #define X2APIC_TIMER_CUR   0x839  // Current Count Register
 #define X2APIC_EOI        0x80B
 
-#define TIMER_VECTOR 0xEC  // 中断向量,236
+#define TIMER_VECTOR 0xEf  // 中断向量,239
 #define IA32_PMC0    0x0C1   // PMC0 MSR
 
-#define TIMER_INIT_COUNT   0x10000  // 初始计数值，可调整
+#define TIMER_INIT_COUNT   0x100  // 初始计数值，可调整
 
 
 //保存原状态
@@ -53,7 +55,7 @@ extern void my_idt_stub(void);
 //C中断处理函数
 void my_isr_c_handler(void)
 {
-    //pr_info("LAPIC Timer interrupt triggered on cpu %d\n", smp_processor_id());
+    pr_info("LAPIC Timer interrupt triggered on cpu %d\n", smp_processor_id());
     // 发送 EOI，通知 LAPIC 
     wrmsrl(X2APIC_EOI, 0);
 }
@@ -133,15 +135,27 @@ typedef struct gate_struct gate_desc;
     //打印 my_idt_stub 的地址
     unsigned long handler_addr = (unsigned long)&my_idt_stub;
     pr_info("handler地址: 0x%lx\n", handler_addr);
+
+    //扫描 IDT 表，找出空闲的中断向量
+    for (int i = 0; i < 256; i++) {
+    gate_desc *desc = &idt_table[i];
+    unsigned long offset = ((unsigned long)desc->offset_high << 32) |
+                           ((unsigned long)desc->offset_middle << 16) |
+                           desc->offset_low;
+    if (desc->bits.p == 0 || offset == 0) {
+        pr_info("IDT[%3d] 空闲，可用\n", i);
+    }
+}
+
     
     //读取 IDT 表项内容，验证指针正确性
-    for (int i = 235; i < 238; i++) {// 遍历所有可能的中断向量
+    for (int i = 236; i < 240; i++) {// 遍历所有可能的中断向量
         gate_desc *desc = &idt_table[i];
         unsigned long offset = ((unsigned long)desc->offset_high << 32) |
                             ((unsigned long)desc->offset_middle << 16) |
                             desc->offset_low;
 
-        pr_info("使用指针作为起始地址读取写入前的IDT[%3d]: offset=0x%016lx sel=0x%04x "
+        pr_info("使用指针作为起始地址读取写入前的IDT[%3d]: offset=0x%016lx segment=0x%04x "
                 "type=0x%x dpl=%u p=%u ist=%u "
                 "off_low=0x%04x off_mid=0x%04x off_high=0x%08x reserved=0x%08x\n",
                 i,
@@ -220,7 +234,7 @@ typedef struct gate_struct gate_desc;
 
     idtr.address = (unsigned long)new_idt;
     // 使用 lidt 加载新的 IDT到寄存器
-    //write_idt(&idtr);
+    write_idt(&idtr);
     pr_info("[IDT] 已加载新的 IDT 副本，地址 = 0x%lx\n", idtr.address);
 
 
@@ -322,7 +336,10 @@ static int __init check_x2apic_timer_init(void)
     pr_info("Mask (16): 0x%x\n", mask);
     pr_info("模式 (17-18 bits): 0x%x\n", mode);
 
-
+    // 清除原有向量号 (bits 0–7)
+    //value &= ~0xFFULL;
+    // 写入新的 TIMER_VECTOR
+    //value |= TIMER_VECTOR;
     // 清除原来的17-18位（Timer Mode）
     value &= ~(0x3ULL << 17);
     // 设置为Periodic (01)
@@ -332,7 +349,7 @@ static int __init check_x2apic_timer_init(void)
 
     // 再次读取确认
     rdmsrl(X2APIC_LVT_TIMER, value);
-    pr_info("LVT Timer Register (设置完周期模式后): 0x%llx\n", value);
+    pr_info("LVT Timer Register (设置完周期模式和vector后): 0x%llx\n", value);
     vector = value & 0xFF;          // 0-7 位
     mask   = (value >> 16) & 0x1;   // 16 位
     mode   = (value >> 17) & 0x3;   // 17-18 位
@@ -342,7 +359,9 @@ static int __init check_x2apic_timer_init(void)
     pr_info("模式 修改后(17-18 bits): 0x%x\n", mode);
 
    
-    // 注册中断处理函数  要改！！！
+    // 设置 Divide Configuration
+
+    // 注册中断处理函数  
     smp_call_function_single(0, install_idt_entry_on_cpu, NULL, 1);
 
     // 写入 Initial Count 启动定时器
@@ -352,8 +371,15 @@ static int __init check_x2apic_timer_init(void)
     
     // 读取 Current Count
     rdmsrl(X2APIC_TIMER_CUR, value);
-    pr_info("Current Count Register: 0x%llx\n", value);
+    pr_info("等待前Current Count Register: 0x%llx\n", value);
     
+    pr_info("等待 LAPIC Timer 中断触发中...\n");
+    // 延迟等待中断触发
+    msleep(3000);
+
+    // 读取 Current Count
+    rdmsrl(X2APIC_TIMER_CUR, value);
+    pr_info("等待后Current Count Register: 0x%llx\n", value);
 
 
     return 0;
@@ -361,7 +387,6 @@ static int __init check_x2apic_timer_init(void)
 
 static void __exit check_x2apic_timer_exit(void)
 {
-
     pr_info("x2APIC Timer module unloaded\n");
 }
 
