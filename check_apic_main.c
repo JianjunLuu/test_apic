@@ -37,6 +37,7 @@ MODULE_LICENSE("GPL");
 #define X2APIC_TIMER_INIT  0x838
 #define X2APIC_TIMER_CUR   0x839  // Current Count Register
 #define X2APIC_EOI        0x80B
+#define X2APIC_DIV_CONF 0x83E
 
 #define TIMER_VECTOR 0xEf  // 中断向量,239
 #define IA32_PMC0    0x0C1   // PMC0 MSR
@@ -322,6 +323,11 @@ static int __init check_x2apic_timer_init(void)
     pr_info("Local APIC Version: 0x%llx\n", value & 0xFF);
     pr_info("Max LVT Entry: %llu\n", (value >> 16) & 0xFF);
 
+    // 注册中断处理函数  
+    //smp_call_function_single(0, install_idt_entry_on_cpu, NULL, 1);
+    install_idt_entry_on_cpu(NULL);
+
+
     // 读取 LVT Timer 寄存器
     rdmsrl(X2APIC_LVT_TIMER, value);
     pr_info("LVT Timer Register (设置前): 0x%llx\n", value);    
@@ -359,10 +365,22 @@ static int __init check_x2apic_timer_init(void)
     pr_info("模式 修改后(17-18 bits): 0x%x\n", mode);
 
    
-    // 设置 Divide Configuration
+    // 设置 Divide Configuration Register
+    // 1. 读取设置前的寄存器值
+    rdmsrl(X2APIC_DIV_CONF, value);
+    pr_info("Divide Configuration Register (设置前): 0x%llx\n", value);
+    /*
+     Divide Value 对应 bits 0,1,3
+     例如要设置为 “Divide by 16” => 011b
+     */
+    value &= ~0xB;   // 清除 bits [3,1,0] (bit3=0b1000, bit1=0b0010, bit0=0b0001)
+    value |= 0x3;    // 设置为 011b => Divide by 16
+    // 2. 写入新的配置值
+    wrmsrl(X2APIC_DIV_CONF, value);
+    // 3. 读取设置后的寄存器值
+    rdmsrl(X2APIC_DIV_CONF, value);
+    pr_info("Divide Configuration Register (设置后): 0x%llx\n", value);
 
-    // 注册中断处理函数  
-    smp_call_function_single(0, install_idt_entry_on_cpu, NULL, 1);
 
     // 写入 Initial Count 启动定时器
     wrmsrl(X2APIC_TIMER_INIT, TIMER_INIT_COUNT);
@@ -381,6 +399,13 @@ static int __init check_x2apic_timer_init(void)
     rdmsrl(X2APIC_TIMER_CUR, value);
     pr_info("等待后Current Count Register: 0x%llx\n", value);
 
+    // 停止定时器：设置 Initial Count 为 0或者屏蔽 LVT Timer
+    //rdmsrl(X2APIC_LVT_TIMER, value);
+    // 设置 Mask 位 (bit 16 = 1)
+    //value |= (1ULL << 16);
+    //wrmsrl(X2APIC_LVT_TIMER, value);
+
+    //wrmsrl(X2APIC_TIMER_INIT, 0x0); 
 
     return 0;
 }
