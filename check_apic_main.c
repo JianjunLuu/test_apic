@@ -53,13 +53,17 @@ static u64 old_init_count = 0;
 static bool old_lvt_saved = false;*/
 
 extern void my_idt_stub(void);
-//C中断处理函数
-void my_isr_c_handler(void)
+extern unsigned long long tsc_value;
+extern unsigned long long irq_count;
+    //判断handler是否被调用
+void trigger_on_cpu0(void *info)
 {
-    pr_info("LAPIC Timer interrupt triggered on cpu %d\n", smp_processor_id());
-    // 发送 EOI，通知 LAPIC 
-    wrmsrl(X2APIC_EOI, 0);
+    asm volatile("int $0xEF");
+    pr_info("handler输出tsc: %llu\n", tsc_value);
+    pr_info("handler触发次数: %llu\n", irq_count);
+
 }
+
 static inline void write_idt(struct desc_ptr *dtr)
 {
     __asm__ volatile("lidt (%0)" :: "r"(dtr));
@@ -324,8 +328,8 @@ static int __init check_x2apic_timer_init(void)
     pr_info("Max LVT Entry: %llu\n", (value >> 16) & 0xFF);
 
     // 注册中断处理函数  
-    //smp_call_function_single(0, install_idt_entry_on_cpu, NULL, 1);
-    install_idt_entry_on_cpu(NULL);
+    smp_call_function_single(0, install_idt_entry_on_cpu, NULL, 1);
+    //install_idt_entry_on_cpu(NULL);
 
 
     // 读取 LVT Timer 寄存器
@@ -393,11 +397,19 @@ static int __init check_x2apic_timer_init(void)
     
     pr_info("等待 LAPIC Timer 中断触发中...\n");
     // 延迟等待中断触发
-    msleep(3000);
+    //msleep(3000);
 
     // 读取 Current Count
     rdmsrl(X2APIC_TIMER_CUR, value);
     pr_info("等待后Current Count Register: 0x%llx\n", value);
+
+    //确认计时器循环
+    for (int i = 0; i < 10; i++) {
+    rdmsrl(X2APIC_TIMER_CUR, value);
+    pr_info("Current Count: 0x%llx\n", value);
+    //msleep(500);
+}
+
 
     // 停止定时器：设置 Initial Count 为 0或者屏蔽 LVT Timer
     //rdmsrl(X2APIC_LVT_TIMER, value);
@@ -407,6 +419,10 @@ static int __init check_x2apic_timer_init(void)
 
     //wrmsrl(X2APIC_TIMER_INIT, 0x0); 
 
+
+// 在 CPU0 上触发
+    smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
+    
     return 0;
 }
 
