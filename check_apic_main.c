@@ -57,7 +57,7 @@ extern void my_idt_stub(void);
 static unsigned long long irq_count = 0;//记录中断处理函数被调用次数
 
 //中断处理函数
-void softint_handler(void)
+void apic_timer_handler(void)
 {
     unsigned int lo, hi;
     unsigned long long tsc;
@@ -68,7 +68,7 @@ void softint_handler(void)
 
     pr_info("中断处理次数和tsc #%llu | TSC=%llu\n", irq_count, tsc);
 }
-EXPORT_SYMBOL(softint_handler);
+EXPORT_SYMBOL(apic_timer_handler);
 
 //在 CPU0 上触发中断
 void trigger_on_cpu0(void *info)

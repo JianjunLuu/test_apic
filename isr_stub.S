@@ -2,10 +2,9 @@
     .section .text
     .align 0x10
     .global my_idt_stub
-    .extern softint_handler    # 声明 C 函数
+    .extern apic_timer_handler   # 声明 C 函数
 
 my_idt_stub:
-    # 保存现场
     pushq %rax
     pushq %rbx
     pushq %rcx
@@ -22,10 +21,14 @@ my_idt_stub:
     pushq %r14
     pushq %r15
 
-    # 调用 C 函数
-    call softint_handler
+    call apic_timer_handler
 
-    # 恢复现场并返回
+    # 向 LAPIC 发送 EOI
+    mov $0x80b, %ecx
+    xor %eax, %eax
+    xor %edx, %edx
+    wrmsr
+
     popq %r15
     popq %r14
     popq %r13
