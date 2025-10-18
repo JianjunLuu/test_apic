@@ -53,14 +53,27 @@ static u64 old_init_count = 0;
 static bool old_lvt_saved = false;*/
 
 extern void my_idt_stub(void);
-extern unsigned long long tsc_value;
-extern unsigned long long irq_count;
-    //判断handler是否被调用
+
+static unsigned long long irq_count = 0;//记录中断处理函数被调用次数
+
+//中断处理函数
+void softint_handler(void)
+{
+    unsigned int lo, hi;
+    unsigned long long tsc;
+
+    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    tsc = ((unsigned long long)hi << 32) | lo;
+    irq_count++;
+
+    pr_info("中断处理次数和tsc #%llu | TSC=%llu\n", irq_count, tsc);
+}
+EXPORT_SYMBOL(softint_handler);
+
+//在 CPU0 上触发中断
 void trigger_on_cpu0(void *info)
 {
     asm volatile("int $0xEF");
-    pr_info("handler输出tsc: %llu\n", tsc_value);
-    pr_info("handler触发次数: %llu\n", irq_count);
 
 }
 
@@ -422,7 +435,7 @@ static int __init check_x2apic_timer_init(void)
 
 // 在 CPU0 上触发
     smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
-    
+    smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
     return 0;
 }
 

@@ -1,34 +1,44 @@
 /* my_idt_stub.S */
-    .data
-    .section .data
-    .global tsc_value
-    .global irq_count
-
-tsc_value:
-    .quad 0                 # 存放最近一次中断触发时的时间戳
-irq_count:
-    .quad 0                 # 存放中断触发次数
-
-    .section isr_section, "ax", @progbits
-    .align 0x1000
+    .section .text
+    .align 0x10
     .global my_idt_stub
+    .extern softint_handler    # 声明 C 函数
+
 my_idt_stub:
-    # 1. 读取 TSC
-    rdtsc                   # EDX:EAX ← 当前时间戳
-    shl $32, %rdx           # 左移高 32 位
-    or  %rdx, %rax          # 合并为 64 位到 RAX
-    movq %rax, tsc_value(%rip)  # 保存到全局变量
+    # 保存现场
+    pushq %rax
+    pushq %rbx
+    pushq %rcx
+    pushq %rdx
+    pushq %rsi
+    pushq %rdi
+    pushq %rbp
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
 
-    # 2. irq_count++ （增加中断次数）
-    movq irq_count(%rip), %rax
-    addq $1, %rax
-    movq %rax, irq_count(%rip)
+    # 调用 C 函数
+    call softint_handler
 
-    # 3. 发送 EOI（End Of Interrupt）
-    mov $0x80b, %ecx
-    xor %eax, %eax
-    xor %edx, %edx
-    wrmsr
-
-    # 4. 返回中断
+    # 恢复现场并返回
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rbp
+    popq %rdi
+    popq %rsi
+    popq %rdx
+    popq %rcx
+    popq %rbx
+    popq %rax
     iretq
