@@ -311,23 +311,11 @@ typedef struct gate_struct gate_desc;
     pr_info("cpu %d: IDT vector 0x%x restored\n",
             smp_processor_id(), TIMER_VECTOR);
 }*/
-static int __init check_x2apic_timer_init(void)
-{
+static void setup_x2apic_timer_on_cpu(void *info){
     u32 eax, ebx, ecx, edx;
     u64 apic_base;
     u64 value;
     bool x2apic_supported;
-
-    
-    // 检测 CPU 是否支持 x2APIC
-    cpuid(1, &eax, &ebx, &ecx, &edx);
-    x2apic_supported = (ecx & (1 << 21)) ? true : false;
-    if (!x2apic_supported) {
-        pr_info("CPU does NOT support x2APIC\n");
-        return -ENODEV;
-    }
-    pr_info("CPU supports x2APIC\n");
-
     // 读取 IA32_APIC_BASE MSR
     rdmsrl(IA32_APIC_BASE_MSR, apic_base);
     pr_info("IA32_APIC_BASE MSR: 0x%llx\n", apic_base);
@@ -417,11 +405,11 @@ static int __init check_x2apic_timer_init(void)
     pr_info("等待后Current Count Register: 0x%llx\n", value);
 
     //确认计时器循环
-    for (int i = 0; i < 10; i++) {
-    rdmsrl(X2APIC_TIMER_CUR, value);
-    pr_info("Current Count: 0x%llx\n", value);
-    //msleep(500);
-}
+    for (int i = 0; i < 5; i++) {
+        rdmsrl(X2APIC_TIMER_CUR, value);
+        pr_info("[CPU%d] Current Count: 0x%llx\n", smp_processor_id(), value);
+        //msleep(500);
+    }
 
 
     // 停止定时器：设置 Initial Count 为 0或者屏蔽 LVT Timer
@@ -432,7 +420,27 @@ static int __init check_x2apic_timer_init(void)
 
     //wrmsrl(X2APIC_TIMER_INIT, 0x0); 
 
+}
+static int __init check_x2apic_timer_init(void)
+{
+    u32 eax, ebx, ecx, edx;
+    u64 apic_base;
+    u64 value;
+    bool x2apic_supported;
 
+    
+    // 检测 CPU 是否支持 x2APIC
+    cpuid(1, &eax, &ebx, &ecx, &edx);
+    x2apic_supported = (ecx & (1 << 21)) ? true : false;
+    if (!x2apic_supported) {
+        pr_info("CPU does NOT support x2APIC\n");
+        return -ENODEV;
+    }
+    pr_info("CPU supports x2APIC\n");
+
+    
+    // 在 CPU0 上设置 x2APIC 定时器
+    smp_call_function_single(0, setup_x2apic_timer_on_cpu, NULL, 1);
 // 在 CPU0 上触发
     smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
     smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
