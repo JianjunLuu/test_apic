@@ -26,7 +26,7 @@
 #include <linux/pgtable.h>
 #include <linux/kallsyms.h>
 #include <linux/delay.h>
-
+#include <linux/atomic.h>
 
 
 MODULE_LICENSE("GPL");
@@ -39,21 +39,42 @@ MODULE_LICENSE("GPL");
 #define APIC_LVTT_ONESHOT      (0 << 17)
 #define APIC_LVTT_PERIODIC (1 << 17)
 #define IRQ_VECTOR                  45
+#define X2APIC_TIMER_INIT  0x838
+#define X2APIC_TIMER_CUR   0x839 
 extern void my_idt_stub(void);
 
-static unsigned long long irq_count = 0;//记录中断处理函数被调用次数
 
-//中断处理函数
-void apic_timer_handler(void)
+static atomic64_t irq_count = ATOMIC64_INIT(0);//中断次数
+static unsigned long long tsc = 0;
+static u64 init=0;
+static u64 cur=0;
+
+static void apic_tasklet_func(struct tasklet_struct *t)
 {
     unsigned int lo, hi;
-    unsigned long long tsc;
+    unsigned long long tval;
 
+    // 读取时间戳计数器
     asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    tsc = ((unsigned long long)hi << 32) | lo;
-    irq_count++;
+    tval = ((unsigned long long)hi << 32) | lo;
 
-    pr_info("中断处理次数和tsc #%llu | TSC=%llu\n", irq_count, tsc);
+    tsc = tval;
+    atomic64_inc(&irq_count);
+    
+    rdmsrl(X2APIC_TIMER_INIT, init); 
+    rdmsrl(X2APIC_TIMER_CUR, cur); 
+
+}
+
+
+static struct tasklet_struct apic_tasklet;
+
+
+void apic_timer_handler(void)
+{
+    // 调度 tasklet
+    //tasklet_schedule(&apic_tasklet);
+    return;
 }
 EXPORT_SYMBOL(apic_timer_handler);
 
@@ -289,7 +310,7 @@ static inline uint32_t apic_read2(uint32_t reg)
     }
 int apic_timer_oneshot(uint8_t vector)
 {
-    apic_write2(APIC_LVTT, vector | APIC_LVTT_ONESHOT);
+    apic_write2(APIC_LVTT, vector | APIC_LVTT_PERIODIC);
     //apic_write(APIC_TDCR, APIC_TDR_DIV_2);
     pr_info("APIC LVTT = 0x%llx",
             apic_read2(APIC_LVTT));
@@ -302,14 +323,13 @@ int apic_timer_oneshot(uint8_t vector)
 static void setup_x2apic_timer_on_cpu(void *info){
 
     // 注册中断处理函数  
-    //smp_call_function_single(0, install_idt_entry_on_cpu, NULL, 1);
-    install_idt_entry_on_cpu(NULL);
+    //install_idt_entry_on_cpu(NULL);
 
     //配置apic
     apic_timer_oneshot(IRQ_VECTOR);
 
     //开始计时
-    apic_write2(APIC_TMICT, 10);
+    //apic_write2(APIC_TMICT, 10);
 
 }
 
@@ -317,16 +337,25 @@ static void setup_x2apic_timer_on_cpu(void *info){
 static int __init check_x2apic_timer_init(void)
 {
 
+    pr_info("x2APIC Timer module loaded\n");
+    //tasklet_setup(&apic_tasklet, apic_tasklet_func);
+
     // 在 CPU0 上设置 x2APIC 定时器
     smp_call_function_single(0, setup_x2apic_timer_on_cpu, NULL, 1);
-// 在 CPU0 上触发
+
+
+// 在 CPU0 上软件触发
     //smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
     //smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
+    ssleep(3); 
     return 0;
 }
 
 static void __exit check_x2apic_timer_exit(void)
 {
+    //tasklet_kill(&apic_tasklet);
+    pr_info("count: %llu | TSC=%llu\n", irq_count, tsc);
+    pr_info("init :0x%llu | cur=0x%llu\n", init, cur);
     pr_info("x2APIC Timer module unloaded\n");
 }
 
