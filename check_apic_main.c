@@ -301,7 +301,6 @@ int apic_timer_oneshot(uint8_t vector)
 
 static void setup_x2apic_timer_on_cpu(void *info){
 
-    pr_info("x2APIC Timer module loaded\n");
 
     // 注册中断处理函数  
     install_idt_entry_on_cpu(NULL);
@@ -322,6 +321,8 @@ static int __init check_x2apic_timer_init(void)
     // 在 CPU0 上设置 x2APIC 定时器
     smp_call_function_single(0, setup_x2apic_timer_on_cpu, NULL, 1);
 
+    ssleep(3); //等待一段时间让定时器中断发
+
     //验证apic计时器
     rdmsrl(X2APIC_TIMER_INIT, value);
     pr_info("Initial Count Register: 0x%llx\n", value);
@@ -332,8 +333,8 @@ static int __init check_x2apic_timer_init(void)
 
 
 // 在 CPU0 上软件触发
-    smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
-    smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
+    //smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
+    //smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
     return 0;
 }
 
