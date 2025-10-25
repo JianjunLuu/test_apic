@@ -307,13 +307,22 @@ int apic_timer_oneshot(uint8_t vector)
 
 }
 
+int apic_timer_periodic(uint8_t vector)//周期模式
+{
+    apic_write2(APIC_LVTT, vector | APIC_LVTT_PERIODIC);
+    //apic_write(APIC_TDCR, APIC_TDR_DIV_2);
+    pr_info("APIC LVTT = 0x%llx",
+            apic_read2(APIC_LVTT));
+    return 0;
+
+}
 void do_irq_tmr(void){
     pre_irq();
     apic_write2(APIC_TMICT, 10);
     if (!(my_flags & (0x1 << 9)))//如果CPU 的中断标志（IF）为 0（即中断被禁用），就直接返回
         return;
 
-    while (!__ss_irq_fired)//等待中断结束
+    while (!__ss_irq_fired)//等待中断结束，如果为1则跳出循环
     {
         asm("nop\n\t");
     }
@@ -335,17 +344,19 @@ void do_irq_apic_tmr_test(void)
 
 static void setup_x2apic_timer_on_cpu(void *info){
 
-    pr_info("x2APIC Timer module loaded\n");
 
     // 注册中断处理函数  
-    install_idt_entry_on_cpu(NULL);
+    //install_idt_entry_on_cpu(NULL);
 
-    //配置apic
-    apic_timer_oneshot(IRQ_VECTOR);
+    //配置oneshot模式
+    //apic_timer_oneshot(IRQ_VECTOR);
 
+    //配置周期模式
+    apic_timer_periodic(IRQ_VECTOR);
+    //apic_write2(APIC_TMICT, 100);
 
     //测试apic中断
-    do_irq_apic_tmr_test();
+    //do_irq_apic_tmr_test();
 
 
 }
