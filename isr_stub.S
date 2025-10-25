@@ -26,6 +26,7 @@ __ss_irq_rip:
     .global my_idt_stub
 my_idt_stub:
 
+    cli
 
     /* Nemesis IRQ latency timestamp */
     mov %rax, __ss_irq_rax(%rip)
@@ -50,5 +51,5 @@ my_idt_stub:
     mov __ss_irq_rdx(%rip), %rdx
     mov __ss_irq_rcx(%rip), %rcx
 
-
+    sti   
     iretq
