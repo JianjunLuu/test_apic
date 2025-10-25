@@ -43,24 +43,34 @@ MODULE_LICENSE("GPL");
 #define X2APIC_TIMER_CUR   0x839
 extern void my_idt_stub(void);
 
-static unsigned long long irq_count = 0;//记录中断处理函数被调用次数
-static unsigned long long tsc = 0;
-//中断处理函数
-void apic_timer_handler(void)
+extern int volatile __ss_irq_fired, __ss_irq_count;
+extern uint64_t __ss_irq_rip;
+extern uint64_t nemesis_tsc_aex;
+uint64_t my_flags = 0;//是否开启中断标志
+
+
+
+uint64_t read_flags(void)
 {
-    unsigned int lo, hi;
+    uint64_t flags = 0x0;
 
-    asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    tsc = ((unsigned long long)hi << 32) | lo;
-    irq_count++;
+    asm("pushfq\n\t"
+        "popq %0\n\t"
+        :"=m"(flags)::);
 
+    return flags;
 }
-EXPORT_SYMBOL(apic_timer_handler);
-
+void pre_irq(void)
+{
+    my_flags = read_flags();//中断标志，IF=1 时允许硬件中断，IF=0 时屏蔽中断
+    __ss_irq_fired = 0;//重置中断标志
+}
 //在 CPU0 上触发中断
 void trigger_on_cpu0(void *info)
 {
+    pre_irq();
     asm volatile("int $0x2d");
+    pr_info("IRQ fired: %d, count=%d, TSC=%llu\n", __ss_irq_fired, __ss_irq_count,nemesis_tsc_aex);
 
 }
 
@@ -289,7 +299,7 @@ static inline uint32_t apic_read2(uint32_t reg)
     }
 int apic_timer_oneshot(uint8_t vector)
 {
-    //apic_write2(APIC_LVTT, vector | APIC_LVTT_ONESHOT);
+    apic_write2(APIC_LVTT, vector | APIC_LVTT_ONESHOT);
     //apic_write(APIC_TDCR, APIC_TDR_DIV_2);
     pr_info("APIC LVTT = 0x%llx",
             apic_read2(APIC_LVTT));
@@ -297,10 +307,35 @@ int apic_timer_oneshot(uint8_t vector)
 
 }
 
+void do_irq_tmr(void){
+    pre_irq();
+    apic_write2(APIC_TMICT, 10);
+    if (!(my_flags & (0x1 << 9)))//如果CPU 的中断标志（IF）为 0（即中断被禁用），就直接返回
+        return;
 
+    while (!__ss_irq_fired)//等待中断结束
+    {
+        asm("nop\n\t");
+    }
+}
+void do_irq_apic_tmr_test(void)
+{
+    
+        pr_info("Triggering ring-0  interrupts..");
+        for (int i=0; i < 10; i++)
+        {
+
+            do_irq_tmr();
+            while (!__ss_irq_fired);//中断结束
+            pr_info("IRQ fired: %d, count=%d, TSC=%llu\n", __ss_irq_fired, __ss_irq_count,nemesis_tsc_aex);
+
+        }
+    
+}
 
 static void setup_x2apic_timer_on_cpu(void *info){
 
+    pr_info("x2APIC Timer module loaded\n");
 
     // 注册中断处理函数  
     install_idt_entry_on_cpu(NULL);
@@ -308,8 +343,10 @@ static void setup_x2apic_timer_on_cpu(void *info){
     //配置apic
     apic_timer_oneshot(IRQ_VECTOR);
 
-    //开始计时
-    //apic_write2(APIC_TMICT, 10);
+
+    //测试apic中断
+    do_irq_apic_tmr_test();
+
 
 }
 
@@ -318,10 +355,9 @@ static int __init check_x2apic_timer_init(void)
 {
     pr_info("x2APIC Timer module loaded\n");
     u64 value;
-    // 在 CPU0 上设置 x2APIC 定时器
-    smp_call_function_single(0, setup_x2apic_timer_on_cpu, NULL, 1);
+    // 在 CPU1 上设置 x2APIC 定时器
+    smp_call_function_single(1, setup_x2apic_timer_on_cpu, NULL, 1);
 
-    ssleep(3); //等待一段时间让定时器中断发
 
     //验证apic计时器
     rdmsrl(X2APIC_TIMER_INIT, value);
@@ -340,7 +376,7 @@ static int __init check_x2apic_timer_init(void)
 
 static void __exit check_x2apic_timer_exit(void)
 {
-    pr_info("中断处理次数和tsc #%llu | TSC=%llu\n", irq_count, tsc);
+    
     pr_info("x2APIC Timer module unloaded\n");
 }
 
