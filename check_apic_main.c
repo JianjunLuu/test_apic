@@ -301,8 +301,8 @@ static inline uint32_t apic_read2(uint32_t reg)
 int apic_timer_oneshot(uint8_t vector)
 {
     apic_write2(APIC_LVTT, vector | APIC_LVTT_ONESHOT);
-    apic_write2(APIC_TDCR, APIC_TDR_DIV_2);
-    pr_info("APIC LVTT = 0x%llx",
+    //apic_write2(APIC_TDCR, APIC_TDR_DIV_2);
+    pr_info("cpu %d, APIC LVTT = 0x%llx",smp_processor_id(),
             apic_read2(APIC_LVTT));
     return 0;
 
@@ -351,11 +351,11 @@ static void setup_x2apic_timer_on_cpu(void *info){
     install_idt_entry_on_cpu(NULL);
 
     //配置oneshot模式
-    //apic_timer_oneshot(IRQ_VECTOR);
-
+    apic_timer_oneshot(IRQ_VECTOR);
+/*
     //配置周期模式
     apic_timer_periodic(IRQ_VECTOR);
-    apic_write2(APIC_TMICT, 100);
+    //apic_write2(APIC_TMICT, 100);
     //验证apic计时器
     rdmsrl(X2APIC_TIMER_INIT, value);
     pr_info("Initial Count Register: 0x%llx\n", value);
@@ -365,13 +365,13 @@ static void setup_x2apic_timer_on_cpu(void *info){
         pr_info("Current Count Register 0x%llx\n", value);
     }
     //写入0停止周期模式计时器
-    apic_write2(APIC_TMICT, 0);
+    //apic_write2(APIC_TMICT, 0);
     rdmsrl(X2APIC_TIMER_CUR, value);
     pr_info("Current Count Register 0x%llx\n", value);
     pr_info("IRQ fired: %d, count=%d, TSC=%llu\n", __ss_irq_fired, __ss_irq_count,nemesis_tsc_aex);
-
+*/
     //测试oneshot模式中断
-    //do_irq_apic_tmr_test();
+    do_irq_apic_tmr_test();
 
 
 }
@@ -380,14 +380,13 @@ static void setup_x2apic_timer_on_cpu(void *info){
 static int __init check_x2apic_timer_init(void)
 {
     pr_info("x2APIC Timer module loaded\n");
-    // 在 CPU0 上设置 x2APIC 定时器
-    smp_call_function_single(0, setup_x2apic_timer_on_cpu, NULL, 1);
-
+    // 在 CPU1 上设置 x2APIC 定时器
+    smp_call_function_single(1, setup_x2apic_timer_on_cpu, NULL, 1);
 
 
 // 在 CPU0 上软件触发
-    //smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
-    //smp_call_function_single(0, trigger_on_cpu0, NULL, 1);
+    //smp_call_function_single(1, trigger_on_cpu0, NULL, 1);
+    //smp_call_function_single(1, trigger_on_cpu0, NULL, 1);
     return 0;
 }
 
